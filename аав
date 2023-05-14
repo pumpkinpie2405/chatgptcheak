@@ -1,0 +1,419 @@
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.by import By
+import os
+import sys
+import json
+from selenium.webdriver.common.keys import Keys
+import time
+import threading
+from PyQt5.QtWidgets import QTextEdit
+from selenium.webdriver.chrome.service import Service
+from selenium import webdriver
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
+from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QListWidget, QLabel, QCheckBox, QLineEdit
+import requests
+from fake_useragent import UserAgent
+import sys
+from time import sleep
+
+current_directory = os.getcwd()
+chromedriver_path = os.path.join(current_directory, "chromedriver.exe")
+service = Service(chromedriver_path)
+ua = UserAgent()
+options = webdriver.ChromeOptions()
+options.add_argument("--disable-blink-features=AutomationControlled")
+
+
+url = 'https://steamcommunity.com/market'
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Steam outbid helper | zelenka.guru/members/2628613")
+        self.init_ui()
+        self.driver = None
+
+    def init_ui(self):
+        # Создание списка текстовых документов
+        self.list_widget = QListWidget()
+        self.update_file_list()
+        self.button_clicked()
+
+        self.curs_input = QLineEdit()
+        self.curs_input.setMaximumWidth(100)
+
+
+        # Создание кнопок
+        self.add_account_button = QPushButton("Добавить аккаунт")
+        self.add_account_button.clicked.connect(self.start_processing_auth)
+        self.update_button = QPushButton("Обновить")
+        self.update_button.clicked.connect(self.update_file_list)
+        self.delete_button = QPushButton("Удалить аккаунт")
+        self.delete_button.clicked.connect(self.delete_file)
+        self.market_button = QPushButton("Сравнение цен маркета и стима")
+        self.market_button.clicked.connect(self.start_processing_collect_data)
+        self.execute_button = QPushButton("Проверка лотов (перебив)")
+        self.execute_button.clicked.connect(self.start_processing)
+
+        self.hide_browser_checkbox = QCheckBox("Скрыть окно браузера")
+
+        # Создание виджета логов
+        self.log_text_edit = QTextEdit()
+        self.log_text_edit.setReadOnly(True)  # Установка виджета логов только для чтения
+
+        # Размещение виджетов
+        vbox = QVBoxLayout()
+        hbox = QHBoxLayout()
+        vbox.addWidget(self.list_widget)
+        vbox.addWidget(self.add_account_button)
+        vbox.addWidget(self.update_button)
+        vbox.addWidget(self.delete_button)
+        vbox.addWidget(self.market_button)
+        vbox.addWidget(self.execute_button)
+        vbox.addWidget(self.hide_browser_checkbox)
+        vbox.addWidget(self.curs_input)
+        hbox.addLayout(vbox)
+        hbox.addWidget(self.log_text_edit)
+
+        # Создание главного виджета и его установка
+        widget = QWidget()
+        widget.setLayout(hbox)
+        self.setCentralWidget(widget)
+
+    def add_log(self, log_text):
+        threading.Thread(target=self.update_log_text, args=(log_text,)).start()
+
+    def update_log_text(self, log_text):
+        self.log_text_edit.append(log_text)
+
+    def get_file_list(self, directory):
+        file_list = []
+        for filename in os.listdir(directory):
+            file_path = os.path.join(directory, filename)
+            if os.path.isfile(file_path):
+                file_list.append(file_path)
+        return file_list
+
+    def update_file_list(self):
+        directory = os.path.join(current_directory, "Accounts")
+        file_list = self.get_file_list(directory)
+        self.list_widget.clear()
+        self.list_widget.addItems([os.path.basename(file) for file in file_list])
+
+    def button_clicked(self):
+
+        # Получаем выбранный элемент списка
+        selected_item = self.list_widget.currentItem()
+        if not selected_item:
+            return
+        filename = selected_item.text()
+
+        # Читаем файл и получаем значения SteamLoginSecure и SessionID
+        with open(os.path.join(current_directory, "Accounts", filename), "r") as file:
+            content = file.read()
+            lines = content.split("\n")
+            for line in lines:
+                if line.startswith("SteamLoginSecure"):
+                    self.steam_Login_Secure = line.split("=")[1]
+                elif line.startswith("SessionID"):
+                    self.session_id = line.split("=")[1]
+                elif line.startswith("account_names"):
+                    self.name_akka = line.split("=")[1]
+
+        options = webdriver.ChromeOptions()
+        if self.hide_browser_checkbox.isChecked():
+            options.add_argument('--headless')
+            self.add_log("Браузер скрыт")
+
+
+        self.driver = webdriver.Chrome(service=service, options=options)
+        self.add_log("_________________________________________")
+        self.add_log(" ")
+        self.add_log(f"Проверка лотов на аккаунте - {self.name_akka}")
+
+        self.driver.get("https://steamcommunity.com")
+
+        # добавляем куки для авторизации
+        cookie1 = {'name': 'sessionid', 'value': f'{self.session_id}'}
+        cookie3 = {'name': 'steamLoginSecure', 'value': f'{self.steam_Login_Secure}'}
+
+        self.driver.add_cookie(cookie1)
+        self.driver.add_cookie(cookie3)
+
+        # обновляем страницу и должны быть автоматически авторизованы в свой аккаунт Steam
+
+        self.driver.get(url)
+        soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+        lot2 = soup.find('div', class_='my_listing_section market_content_block market_home_listing_table')
+        lot = lot2.find_all('div', class_='market_listing_row')
+        for lots in lot:
+            link1 = lots.find('a', class_='market_listing_item_name_link')
+            if link1 is None:
+                self.add_log("Проверка цен закончена!")
+                self.add_log("_________________________________________")
+                self.add_log(" ")
+                self.driver.quit()
+                break
+            else:
+                link = link1.get('href')
+                print('Лог ссылки - ', link)
+                self.driver.get(link)
+
+                sleep(1)
+                soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+                myprice = soup.find('span', class_='market_table_value').text.strip().split('\n')[-1].replace(
+                    '				', '').replace('₸', '')
+                print('Лог моей цены закупа - ', myprice)
+
+                soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+                marketprice1 = soup.select_one('#market_commodity_buyrequests > span:nth-child(3)')
+                marketprice = marketprice1.text.replace('₸', '')
+                buy_sum = marketprice.replace(',', '.').replace(" ", "")
+                buy_sum1 = float(buy_sum) + 0.10
+                print('Лог цены на ТП - ', marketprice)
+                quan1 = soup.find('span', class_='market_table_value').text.strip().split('\n')[0]
+                quan = quan1.replace(' @', '')
+                print('Лог Новая цена закупа - ', buy_sum1)
+                print('Лог количества предметов - ', quan)
+
+                if myprice != marketprice:
+                    delete = WebDriverWait(self.driver, 100).until(EC.presence_of_element_located(
+                        (By.CLASS_NAME, "item_market_action_button.item_market_action_button_edit.nodisable")))
+                    delete.click()
+                    sleep(1)
+                    button = WebDriverWait(self.driver, 100).until(EC.presence_of_element_located(
+                        (By.XPATH, "//a[contains(@onclick, 'Market_ShowBuyOrderPopup')]")))
+                    button.click()
+                    sleep(1)
+
+                    price_input = self.driver.find_element(By.ID, 'market_buy_commodity_input_price')
+                    quantity_input = self.driver.find_element(By.ID, 'market_buy_commodity_input_quantity')
+
+                    price_input.clear()
+                    price_input.send_keys(buy_sum1)
+                    quantity_input.clear()
+                    quantity_input.send_keys(quan)
+                    button2 = WebDriverWait(self.driver, 100).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "#market_buyorder_dialog_accept_ssa")))
+                    button2.click()
+                    button1 = WebDriverWait(self.driver, 100).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "#market_buyorder_dialog_purchase")))
+                    button1.click()
+                    self.add_log(f"Цена на лот перебита")
+                else:
+                    self.add_log(f"Цена не требует изменений")
+        self.add_log("Проверка лотов закончена!")
+        self.add_log("_________________________________________")
+        self.add_log(" ")
+        self.driver.quit()
+
+    def start_processing(self):
+        threading.Thread(target=self.button_clicked).start()
+
+    def auth(self):
+
+        options = webdriver.ChromeOptions()
+        options.add_argument("--start-maximized")
+        if self.driver is not None:
+            self.driver.quit()
+        self.driver = webdriver.Chrome(service=service, options=options)
+        self.driver.get("https://store.steampowered.com/login/")
+        self.driver.maximize_window()
+        # wait for the user to log in manually
+        wait = WebDriverWait(self.driver, 300)  # ВРЕМЯ ОЖИДАНИЯ АВТОРИЗАЦИИ!!!!!!!!
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#account_pulldown")))
+
+        # get the account nickname, SteamLoginSecure, and SessionID cookies#account_pulldown
+        account_name = self.driver.find_element(By.CSS_SELECTOR, "#account_pulldown").text
+        steam_login_secure = self.driver.get_cookie("steamLoginSecure")["value"]
+        session_id = self.driver.get_cookie("sessionid")["value"]
+
+        # save the cookies to a text file with the account nickname as the filename
+
+        folder_path = os.path.join(current_directory, "Accounts")
+        with open(os.path.join(folder_path, f"{account_name}.txt"), "w") as f:
+            f.write(f"SteamLoginSecure={steam_login_secure}\n")
+            f.write(f"SessionID={session_id}\n")
+            f.write(f"account_names={account_name}")
+        self.add_log(f"Добавлен аккаунт - {account_name}")
+        self.driver.quit()
+        pass
+
+    def start_processing_auth(self):
+        threading.Thread(target=self.auth).start()
+
+    def delete_file(self):
+        if self.driver is not None:  # Закрываем браузер, если он был создан
+            self.driver.quit()
+            self.driver = None
+        selected_item = self.list_widget.currentItem()
+        if selected_item:
+            file_path = selected_item.text()
+            # Удаление файла из списка
+            self.list_widget.takeItem(self.list_widget.row(selected_item))
+            # Удаление файла из папки
+            os.remove(os.path.join(current_directory, "Accounts", file_path))
+
+    def add_log(self, log_text):
+        self.log_text_edit.append(log_text)
+
+    def collect_data(self):
+        selected_item = self.list_widget.currentItem()
+        if not selected_item:
+            return
+        filename = selected_item.text()
+
+        # Читаем файл и получаем значения SteamLoginSecure и SessionID
+        with open(os.path.join(current_directory, "Accounts", filename), "r") as file:
+            content = file.read()
+            lines = content.split("\n")
+            for line in lines:
+                if line.startswith("SteamLoginSecure"):
+                    self.steam_Login_Secure = line.split("=")[1]
+                elif line.startswith("SessionID"):
+                    self.session_id = line.split("=")[1]
+                elif line.startswith("account_names"):
+                    self.name_akka = line.split("=")[1]
+
+
+        if self.hide_browser_checkbox.isChecked():
+            options.add_argument('--headless')
+            self.add_log("Браузер скрыт")
+        response = requests.get(url='https://market.csgo.com/api/v2/prices/RUB.json',
+                                headers={'user-agent': f'{ua.random}'})
+        with open('result.json', 'w', encoding='utf-8') as file:
+            json.dump(response.json(), file, indent=4, ensure_ascii=False)
+        options = webdriver.ChromeOptions()
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            'source': '''
+                delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+                delete window.cdc_adoQpoasnfa76pfcZLmcfl_Object;
+                delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+                delete window.cdc_adoQpoasnfa76pfcZLmcfl_Proxy;
+                delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+          '''
+        })
+
+        try:
+            driver.maximize_window()
+            driver.get('https://market.csgo.com/en/?priceMin=1&priceMax=40')
+
+
+            time.sleep(12)
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            content_wrapper = soup.find('div', class_='cdk-virtual-scroll-content-wrapper')
+
+            # Создаем пустой список для хранения результатов
+            results = []
+
+            for element in content_wrapper.find_all('a', title=True, limit=40):
+                item_name = element.get('title')
+                with open('result.json', 'r', encoding='utf-8') as file:
+                    data = json.load(file)
+                for item in data['items']:
+                    if item.get('market_hash_name') == item_name:
+                        price = float(item.get('price'))
+
+                        break
+                # Добавляем значения item_name и price в список
+                results.append((item_name, price))
+            print(results)
+            return results
+
+        except Exception as ex:
+            print(ex)
+            sys.exit()
+        finally:
+
+            driver.get("https://steamcommunity.com/login/home/?goto=")
+
+            # добавляем куки для авторизации
+            cookie1 = {'name': 'sessionid', 'value': f'{self.session_id}'}
+            cookie2 = {'name': 'steamLoginSecure', 'value': f'{self.steam_Login_Secure}'}
+
+            driver.add_cookie(cookie1)
+            driver.add_cookie(cookie2)
+
+            driver.get("https://steamcommunity.com/market/search?appid=730")
+
+            curs = self.curs_input.text()
+            curs = float(curs)
+
+            filename = "output.txt"
+            if os.path.exists(filename):  # проверить наличие файла
+                os.remove(filename)  # удалить файл, если он существует
+            for item_name, price in results:
+
+                search = driver.find_element(By.ID, "findItemsSearchBox")
+                search.clear()
+                search.send_keys(item_name)
+                search.send_keys(Keys.ENTER)
+                time.sleep(0.5)
+
+                item_link1 = driver.find_element(By.ID, 'resultlink_0')
+                item_link = item_link1.get_attribute('href')  # ССЫЛКА НА ПРЕДМЕТ
+
+                driver.get(item_link)
+                time.sleep(1.5)
+                soup = BeautifulSoup(driver.page_source, 'html.parser')
+                steamprice2 = soup.select_one('#market_commodity_buyrequests > span:nth-child(3)')
+                steamprice1 = steamprice2.text.replace(' pуб.', '')
+                steamprice = steamprice1.replace(',', '.')
+
+                steamprice = float(steamprice)  # ЦЕНА В СТИМЕ
+                tengeprice = steamprice * curs
+                tengeprice = round(tengeprice, 2)
+                # percent = (steamprice - price) / price * 100
+                # percent = round(percent, 2)
+                # if percent > 1:
+                #     print(item_name)
+                #     print(item_link)
+                #     print("Цена на маркете -", price)
+                #     print("Цена в стиме - ", steamprice)
+                #     print(f"Цена фаст слива в стиме больше цены на маркете на {percent}%")
+                #     print("---------------------------------------------")
+                #
+                #     total_price += price
+                #     total_steamprice += steamprice
+
+                percent = (price - steamprice) / steamprice * 100
+                percent = round(percent, 2)
+                filename = "output.txt"  # название файла для сохранения вывода
+                # with open(filename, "a", encoding='utf-8') as file:  # открыть файл в режиме добавления
+                #     if percent > 0:
+                #         print(item_name, file=file)
+                #         print(item_link, file=file)
+                #         print("Цена на маркете -", price, file=file)
+                #         print("Цена в стиме - ", steamprice, file=file)
+                #         print(f"Цена на маркете больше на {percent}%", file=file)
+                #         print("---------------------------------------------", file=file)
+                if percent > 0:
+                    print(item_name, file=file)
+                    print(item_link, file=file)
+                    print("Цена на маркете -", price, file=file)
+                    print("Цена в стиме - ", steamprice, file=file)
+                    print('Цена в стиме в тенге(₸) -', tengeprice)
+                    print(f"Цена на маркете больше на {percent}%", file=file)
+                    print("---------------------------------------------", file=file)
+
+                driver.get("https://steamcommunity.com/market/search?appid=730")
+                time.sleep(3)
+            driver.quit()
+
+
+    def start_processing_collect_data(self):
+        threading.Thread(target=self.collect_data).start()
+
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+
+    sys.exit(app.exec_())
+
